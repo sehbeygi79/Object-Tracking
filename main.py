@@ -3,15 +3,16 @@ from collections import defaultdict
 import cv2
 import numpy as np
 from ultralytics import YOLO
+from ultralytics.utils.plotting import Annotator, colors
 
 
-def draw_bboxes(frame, boxes_object, object_ids_to_show={0}):
-    bboxes = boxes_object.xyxy.cpu().numpy()  # shape (N,4)
-    confs = boxes_object.conf.cpu().numpy()  # shape (N,)
-    classes = boxes_object.cls.cpu().numpy().astype(int)
-    track_ids = result.boxes.id.int().cpu().tolist()
-
-    for bbox, conf, cls, track_id in zip(bboxes, confs, classes, track_ids):
+def draw_bboxes(frame, detection_results, object_ids_to_show={0}):
+    for bbox, conf, cls, track_id in zip(
+        detection_results["bboxes"],
+        detection_results["confs"],
+        detection_results["classes"],
+        detection_results["track_ids"],
+    ):
         if cls not in object_ids_to_show:
             continue
 
@@ -30,14 +31,37 @@ def draw_bboxes(frame, boxes_object, object_ids_to_show={0}):
     return frame
 
 
+def draw_bboxes_ult(frame, detection_results, object_ids_to_show={0}):
+    annotator = Annotator(frame, line_width=2)
+
+    for bbox, conf, cls, track_id in zip(
+        detection_results["bboxes"],
+        detection_results["confs"],
+        detection_results["classes"],
+        detection_results["track_ids"],
+    ):
+        if cls not in object_ids_to_show:
+            continue
+
+        x1, y1, x2, y2 = map(int, bbox)
+        # label = f"ID: {track_id} {id2label[cls]}"  # Assuming we are tracking people
+        label = f"ID: {track_id} - {float(conf):.2f}"
+        annotator.box_label([x1, y1, x2, y2], label, color=colors(int(track_id), True))
+
+    return frame
+
+
 # ---- Config ----
-VIDEO_SOURCE = "./data/input.mp4"  # 0 = webcam, or "path/to/video.mp4"
+VIDEO_SOURCE = "./data/input.mp4"
 MODEL_NAME = "yolo11n.pt"
 DEVICE = "cpu"
 IMG_SIZE = 320
 CONFIDENCE = 0.25
-TRACKER = "bytetrack.yaml"  # tracker choice (ByteTrack recommended)
+TRACKER = "bytetrack.yaml"
 OBJECTS_TO_SHOW = {"person"}
+SKIP_FRAMES = 5  # Set to 1 to disable skipping
+SHOW_STREAM = True  # Set to True to display the processed video
+SAVE_VIDEO = True  # Set to True to store the processed video
 # ----------------
 
 
@@ -48,50 +72,101 @@ object_ids_to_show = {k for k, v in id2label.items() if v in OBJECTS_TO_SHOW}
 
 # ---- Video writer setup ----
 cap = cv2.VideoCapture(VIDEO_SOURCE)
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-fps = cap.get(cv2.CAP_PROP_FPS) or 30
-width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-output = cv2.VideoWriter(
-    VIDEO_SOURCE.replace(".mp4", "_processed.mp4"), fourcc, fps, (width, height)
-)
+if SAVE_VIDEO:
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    output = cv2.VideoWriter(
+        VIDEO_SOURCE.replace(".mp4", "_processed.mp4"), fourcc, fps, (width, height)
+    )
 
+
+print(f"Starting video processing with detection every {SKIP_FRAMES} frames...")
+
+
+tracker = None
+tracker_initialized = False
 track_history = defaultdict(lambda: [])
+frame_count = 0
 while cap.isOpened():
     success, frame = cap.read()
+    detection_results = {}
 
     if not success:  # The end of the video is reached
         break
 
-    result = model.track(
-        frame,
-        persist=True,
-        imgsz=IMG_SIZE,
-        conf=CONFIDENCE,
-        device=DEVICE,
-        tracker=TRACKER,
-    )[0]
+    if frame_count % SKIP_FRAMES == 0:
+        result = model.track(
+            frame,
+            persist=True,
+            imgsz=IMG_SIZE,
+            conf=CONFIDENCE,
+            device=DEVICE,
+            tracker=TRACKER,
+            verbose=False,
+        )[0]
 
-    if result.boxes and result.boxes.is_track:
-        boxes = result.boxes.xywh.cpu()
-        track_ids = result.boxes.id.int().cpu().tolist()
-        classes = result.boxes.cls.cpu().numpy().astype(int)
-        print(f"track_ids: {track_ids}")
+        # Access the internal tracker instance
+        tracker = model.predictor.trackers[0]
+        tracker_initialized = True
 
-        # frame = result.plot()
-        frame = draw_bboxes(frame, result.boxes, object_ids_to_show)
-        # draw_tracks()
+        # Save results
+        if result.boxes and result.boxes.is_track:
+            detection_results["bboxes"] = result.boxes.xyxy.cpu().numpy()
+            detection_results["track_ids"] = result.boxes.id.int().cpu().numpy()
+            detection_results["classes"] = result.boxes.cls.int().cpu().numpy()
+            detection_results["confs"] = (last_confs := result.boxes.conf.cpu().numpy())
+
+    # For skipped detection frames, use the tracker's prediction
+    else:
+        if tracker_initialized:
+            # Manually predict next locations using the tracker's motion model (Kalman filter)
+            tracks = [t for t in tracker.tracked_stracks if t.is_activated]
+            tracker.multi_predict(tracks)
+            tracker.frame_id += 1
+
+            estimated_boxes = []
+            for t in tracks:
+                # Format: [x1, y1, x2, y2, track_id, score, class]
+                estimated_boxes.append(np.hstack([t.xyxy, t.track_id, t.score, t.cls]))
+
+            # Save estimated results
+            if len(estimated_boxes):
+                detection_results["bboxes"] = np.array(
+                    [box[:4] for box in estimated_boxes]
+                )
+                detection_results["track_ids"] = np.array(
+                    [int(box[4]) for box in estimated_boxes]
+                )
+                detection_results["classes"] = np.array(
+                    [int(box[6]) for box in estimated_boxes]
+                )
+                detection_results["confs"] = last_confs
+
+        else:
+            # Skip frames until the first detection has occurred
+            frame_count += 1
+            continue
+
+    if len(detection_results):
+        frame = draw_bboxes_ult(frame, detection_results, object_ids_to_show)
 
     # Display the annotated frame
-    cv2.imshow("People Tracking", frame)
-    output.write(frame)
+    if SHOW_STREAM:
+        cv2.imshow("People Tracking", frame)
+    if SAVE_VIDEO:
+        output.write(frame)
 
     # Break the loop if 'q' is pressed
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
+    frame_count += 1
 
-# Release the video capture object and close the display window
+
 cap.release()
-output.release()
-cv2.destroyAllWindows()
+if SAVE_VIDEO:
+    output.release()
+if SHOW_STREAM:
+    cv2.destroyAllWindows()
