@@ -2,7 +2,16 @@ import time
 import cv2
 
 
-def is_crossing(prev_center, current_center, line_start, line_end):
+# args: prev_center, current_center, line_start, line_end
+def is_crossing(p1, p2, p3, p4):
+    tc1 = (p1[0] - p2[0]) * (p3[1] - p1[1]) + (p1[1] - p2[1]) * (p1[0] - p3[0])
+    tc2 = (p1[0] - p2[0]) * (p4[1] - p1[1]) + (p1[1] - p2[1]) * (p1[0] - p4[0])
+    td1 = (p3[0] - p4[0]) * (p1[1] - p3[1]) + (p3[1] - p4[1]) * (p3[0] - p1[0])
+    td2 = (p3[0] - p4[0]) * (p2[1] - p3[1]) + (p3[1] - p4[1]) * (p3[0] - p2[0])
+    return tc1 * tc2 < 0 and td1 * td2 < 0
+
+
+def is_crossing2(prev_center, current_center, line_start, line_end):
     """
     Checks if a line segment defined by (prev_center, current_center) crosses
     another line segment defined by (line_start, line_end).
@@ -51,22 +60,22 @@ def is_crossing(prev_center, current_center, line_start, line_end):
     return False
 
 
-def draw_policy_lines(frame, policy_lines, detection_results, crossing_track_ids):
+def draw_policy_lines(
+    frame,
+    policy_lines,
+    line_crossing_storage,
+    line_activity_due_times,
+):
     for line_id, line in enumerate(policy_lines):
         # Line = [[x1, y1], [x2, y2]]
         p1 = tuple(line[0])
         p2 = tuple(line[1])
 
-        # Color the line based on if any tracked object is currently crossing it
-        is_being_crossed = any(
-            line_id in crossing_track_ids[track_id]
-            for track_id in detection_results.get("track_ids", [])
-        )
+        is_active = line_activity_due_times[line_id] >= time.time()
         line_color = (
-            (0, 0, 255) if is_being_crossed else (255, 255, 0)
-        )  # Red if crossed, Cyan otherwise
+            (0, 0, 255) if is_active else (128, 255, 0)
+        )  # Red if crossed, Green otherwise
 
-        # Draw the line on the frame
         cv2.line(frame, p1, p2, line_color, 3)
 
         # Label the line
@@ -77,7 +86,17 @@ def draw_policy_lines(frame, policy_lines, detection_results, crossing_track_ids
             f"Line {line_id}",
             (mid_x, mid_y - 25),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
+            0.6,
+            line_color,
+            2,
+        )
+
+        cv2.putText(
+            frame,
+            f"Counter: {len(line_crossing_storage[line_id])}",
+            (mid_x, mid_y + 35),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
             line_color,
             2,
         )
@@ -86,8 +105,9 @@ def draw_policy_lines(frame, policy_lines, detection_results, crossing_track_ids
 
 
 def update_crossing_status(
-    frame, detection_results, policy_lines, track_history, crossing_track_ids
+    detection_results, policy_lines, track_history, line_crossing_storage
 ):
+    policy_lines_activity = [False] * len(policy_lines)
     # Check for line crossing events
     for bbox, track_id in zip(
         detection_results.get("bboxes", []),
@@ -95,53 +115,39 @@ def update_crossing_status(
     ):
         x1, y1, x2, y2 = map(int, bbox)
         # Use the bottom-center of the bounding box as the tracking point
-        # TODO: we should select the appropriate point based on the direction of the movement
-        # bbox_center = (int((x1 + x2) / 2), int((y1 + y2) / 2))
-        # bbox_bottom = (int((x1 + x2) / 2), y2)
-        # corner_points = ((x1, y1), (x2, y1), (x1, y2), (x2, y2))
         current_center = (int((x1 + x2) / 2), y2)
-        
-
-        # Get history for this track ID
         history = track_history[track_id]
-
-        # Only check for crossing if there is a previous center point
         if len(history) > 0:
             prev_center = history[-1]
-
-            # Clear crossings for the current object on this frame
-            crossing_track_ids[track_id] = set()
 
             for line_id, line in enumerate(policy_lines):
                 line_start = tuple(line[0])
                 line_end = tuple(line[1])
 
                 if is_crossing(prev_center, current_center, line_start, line_end):
-                    crossing_track_ids[track_id].add(line_id)
+                    line_crossing_storage[line_id].append(track_id)
+                    policy_lines_activity[line_id] = True
                     print(
                         f"--- Line Crossing Detected! --- Track ID {track_id} crossed Line {line_id}"
                     )
-                    # You can add further actions here (e.g., logging, alerting)
 
-        # Update track history for the next frame
+        # Update track history but keep only the last two points necessary for crossing check
         track_history[track_id].append(current_center)
-        # Keep only the last two points (current and previous) for crossing check
         if len(track_history[track_id]) > 2:
             track_history[track_id].pop(0)
 
-    return frame, crossing_track_ids
+    return line_crossing_storage, policy_lines_activity
 
 
+# FPS is the total frames processed divided by the total time elapsed
 def display_fps(frame, start_time, frame_count):
-    # Calculate FPS
     elapsed_time = time.time() - start_time
     if elapsed_time > 0:
-        # FPS is the total frames processed divided by the total time elapsed
         fps = frame_count / elapsed_time
     else:
         fps = 0
 
-    # Format and display FPS on the top-left corner
+    # Display FPS on the top-left corner
     fps_text = f"FPS: {fps:.2f}"
     cv2.putText(frame, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 

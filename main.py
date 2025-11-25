@@ -60,7 +60,8 @@ IMG_SIZE = 320
 CONFIDENCE = 0.25
 TRACKER = "bytetrack.yaml"
 OBJECTS_TO_SHOW = {"person"}
-SKIP_FRAMES = 3  # Set to 1 to disable skipping
+LINE_ALERT_DURATION = 3 # Number of seconds to keep the alert when a line is crossed
+SKIP_FRAMES = 5  # Set to 1 to disable skipping
 SHOW_STREAM = True  # Set to True to display the processed video
 SAVE_VIDEO = True  # Set to True to store the processed video
 # ----------------
@@ -104,7 +105,10 @@ print(f"Starting video processing with detection every {SKIP_FRAMES} frames...")
 tracker = None
 tracker_initialized = False
 track_history = defaultdict(lambda: [])
-crossing_track_ids = defaultdict(lambda: set())
+line_crossing_storage = defaultdict(lambda: [])
+lines_triggered = [False] * len(policy_lines)
+line_activity_due_times = [0] * len(policy_lines)
+
 frame_count = 0
 start_time = time.time()
 while cap.isOpened():
@@ -137,6 +141,12 @@ while cap.isOpened():
             detection_results["confs"] = (last_confs := result.boxes.conf.cpu().numpy())
         else:
             last_confs = np.array([])
+
+        # --- Line Crossing Check ---
+        if len(policy_lines):
+            line_crossing_storage, lines_triggered = update_crossing_status(
+                detection_results, policy_lines, track_history, line_crossing_storage
+            )
     # For skipped detection frames, use the tracker's prediction
     else:
         if tracker_initialized:
@@ -172,21 +182,21 @@ while cap.isOpened():
     if len(detection_results):
         frame = draw_bboxes_ult(frame, detection_results, object_ids_to_show)
 
-    # --- Line Crossing Check and Draw Policy Lines ---
-    if policy_lines:
-        frame, crossing_track_ids = update_crossing_status(
-            frame, detection_results, policy_lines, track_history, crossing_track_ids
+    line_activity_due_times = [
+        time.time() + LINE_ALERT_DURATION if a else d
+        for a, d in zip(lines_triggered, line_activity_due_times)
+    ]
+    # Draw policy lines (red if being crossed)
+    if len(policy_lines):
+        frame = draw_policy_lines(
+            frame,
+            policy_lines,
+            line_crossing_storage,
+            line_activity_due_times,
         )
 
-    # Draw policy lines (red if being crossed)
-    frame = draw_policy_lines(
-        frame, policy_lines, detection_results, crossing_track_ids
-    )
-
-    # --- FPS Display ---
-    frame = display_fps(
-        frame, start_time, frame_count + 1
-    )  # Use frame_count + 1 as it's 0-indexed
+    # --- Draw FPS Display ---
+    frame = display_fps(frame, start_time, frame_count + 1)
 
     # Display the annotated frame
     if SHOW_STREAM:
