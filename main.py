@@ -1,9 +1,12 @@
 from collections import defaultdict
+import time
+import json
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
 from ultralytics.utils.plotting import Annotator, colors
+from utils import display_fps, draw_policy_lines, update_crossing_status
 
 
 def draw_bboxes(frame, detection_results, object_ids_to_show={0}):
@@ -19,9 +22,7 @@ def draw_bboxes(frame, detection_results, object_ids_to_show={0}):
         x1, y1, x2, y2 = map(int, bbox)
         label = f"ID {track_id} - {float(conf):.2f}"
 
-        # draw
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        # background for text
         (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
         cv2.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), (0, 255, 0), -1)
         cv2.putText(
@@ -44,7 +45,6 @@ def draw_bboxes_ult(frame, detection_results, object_ids_to_show={0}):
             continue
 
         x1, y1, x2, y2 = map(int, bbox)
-        # label = f"ID: {track_id} {id2label[cls]}"  # Assuming we are tracking people
         label = f"ID: {track_id} - {float(conf):.2f}"
         annotator.box_label([x1, y1, x2, y2], label, color=colors(int(track_id), True))
 
@@ -53,13 +53,14 @@ def draw_bboxes_ult(frame, detection_results, object_ids_to_show={0}):
 
 # ---- Config ----
 VIDEO_SOURCE = "./data/input.mp4"
+POLICY_JSON_PATH = "./data/policy.json"
 MODEL_NAME = "yolo11n.pt"
 DEVICE = "cpu"
 IMG_SIZE = 320
 CONFIDENCE = 0.25
 TRACKER = "bytetrack.yaml"
 OBJECTS_TO_SHOW = {"person"}
-SKIP_FRAMES = 5  # Set to 1 to disable skipping
+SKIP_FRAMES = 3  # Set to 1 to disable skipping
 SHOW_STREAM = True  # Set to True to display the processed video
 SAVE_VIDEO = True  # Set to True to store the processed video
 # ----------------
@@ -74,12 +75,27 @@ object_ids_to_show = {k for k, v in id2label.items() if v in OBJECTS_TO_SHOW}
 cap = cv2.VideoCapture(VIDEO_SOURCE)
 if SAVE_VIDEO:
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    video_fps = cap.get(cv2.CAP_PROP_FPS) or 30
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     output = cv2.VideoWriter(
-        VIDEO_SOURCE.replace(".mp4", "_processed.mp4"), fourcc, fps, (width, height)
+        VIDEO_SOURCE.replace(".mp4", "_processed.mp4"),
+        fourcc,
+        video_fps,
+        (width, height),
     )
+
+
+# --- Policy File Reading ---
+try:
+    with open(POLICY_JSON_PATH, "r") as f:
+        policy_data = json.load(f)
+    policy_lines = policy_data.get("lines", [])
+    policy_fences = policy_data.get("fences", [])
+    print(f"Loaded {len(policy_lines)} lines from policy file.")
+except (FileNotFoundError, json.JSONDecodeError):
+    print(f"Problem loading the policy file!")
+    exit()
 
 
 print(f"Starting video processing with detection every {SKIP_FRAMES} frames...")
@@ -88,7 +104,9 @@ print(f"Starting video processing with detection every {SKIP_FRAMES} frames...")
 tracker = None
 tracker_initialized = False
 track_history = defaultdict(lambda: [])
+crossing_track_ids = defaultdict(lambda: set())
 frame_count = 0
+start_time = time.time()
 while cap.isOpened():
     success, frame = cap.read()
     detection_results = {}
@@ -117,7 +135,8 @@ while cap.isOpened():
             detection_results["track_ids"] = result.boxes.id.int().cpu().numpy()
             detection_results["classes"] = result.boxes.cls.int().cpu().numpy()
             detection_results["confs"] = (last_confs := result.boxes.conf.cpu().numpy())
-
+        else:
+            last_confs = np.array([])
     # For skipped detection frames, use the tracker's prediction
     else:
         if tracker_initialized:
@@ -149,8 +168,25 @@ while cap.isOpened():
             frame_count += 1
             continue
 
+    # --- Draw Bounding Boxes ---
     if len(detection_results):
         frame = draw_bboxes_ult(frame, detection_results, object_ids_to_show)
+
+    # --- Line Crossing Check and Draw Policy Lines ---
+    if policy_lines:
+        frame, crossing_track_ids = update_crossing_status(
+            frame, detection_results, policy_lines, track_history, crossing_track_ids
+        )
+
+    # Draw policy lines (red if being crossed)
+    frame = draw_policy_lines(
+        frame, policy_lines, detection_results, crossing_track_ids
+    )
+
+    # --- FPS Display ---
+    frame = display_fps(
+        frame, start_time, frame_count + 1
+    )  # Use frame_count + 1 as it's 0-indexed
 
     # Display the annotated frame
     if SHOW_STREAM:
