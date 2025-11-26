@@ -1,0 +1,18 @@
+services:
+    people-tracker:
+        image: people-tracker-image:1
+        build:
+            context: .
+        container_name: people-tracker-cont
+        volumes:
+            - ./data:/app/data
+        tty: true
+
+        # If GPU acceleration is available:
+        # deploy:
+        #     resources:
+        #         reservations:
+        #             devices:
+        #                 - driver: nvidia
+        #                   count: all
+        #                   capabilities: [gpu]
