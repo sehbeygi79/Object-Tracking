@@ -60,9 +60,9 @@ IMG_SIZE = 320
 CONFIDENCE = 0.25
 TRACKER = "bytetrack.yaml"
 OBJECTS_TO_SHOW = {"person"}
-LINE_ALERT_DURATION = 3 # Number of seconds to keep the alert when a line is crossed
+LINE_ALERT_DURATION = 3  # Number of seconds to keep the alert when a line is crossed
 SKIP_FRAMES = 5  # Set to 1 to disable skipping
-SHOW_STREAM = True  # Set to True to display the processed video
+SHOW_STREAM = False  # Set to True to display the processed video
 SAVE_VIDEO = True  # Set to True to store the processed video
 # ----------------
 
@@ -85,7 +85,6 @@ if SAVE_VIDEO:
         video_fps,
         (width, height),
     )
-
 
 # --- Policy File Reading ---
 try:
@@ -183,7 +182,9 @@ while cap.isOpened():
         frame = draw_bboxes_ult(frame, detection_results, object_ids_to_show)
 
     line_activity_due_times = [
-        time.time() + LINE_ALERT_DURATION if a else d
+        # We multiply the duration by 2 because both the frame_count
+        # and the due_times are moving towards each other
+        frame_count + (video_fps * LINE_ALERT_DURATION * 2) if a else d - 1
         for a, d in zip(lines_triggered, line_activity_due_times)
     ]
     # Draw policy lines (red if being crossed)
@@ -193,6 +194,7 @@ while cap.isOpened():
             policy_lines,
             line_crossing_storage,
             line_activity_due_times,
+            frame_count,
         )
 
     # --- Draw FPS Display ---

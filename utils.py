@@ -65,13 +65,14 @@ def draw_policy_lines(
     policy_lines,
     line_crossing_storage,
     line_activity_due_times,
+    frame_count,
 ):
     for line_id, line in enumerate(policy_lines):
         # Line = [[x1, y1], [x2, y2]]
         p1 = tuple(line[0])
         p2 = tuple(line[1])
 
-        is_active = line_activity_due_times[line_id] >= time.time()
+        is_active = line_activity_due_times[line_id] >= frame_count
         line_color = (
             (0, 0, 255) if is_active else (128, 255, 0)
         )  # Red if crossed, Green otherwise
