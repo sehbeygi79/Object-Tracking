@@ -1,11 +1,12 @@
 # --- Video and Model Configuration ---
-VIDEO_SOURCE: "./data/input.mp4"
+INPUT_VIDEO_PATH: "./data/input.mp4"
+OUTPUT_VIDEO_PATH: "./data/output.mp4"
 POLICY_JSON_PATH: "./data/policy.json"
 MODEL_NAME: "yolo11n.pt"
 DEVICE: "cpu"
 IMG_SIZE: 320
-CONFIDENCE: 0.25
-TRACKER: "bytetrack.yaml"
+OD_CONF_THRESHOLD: 0.25
+TRACKER_CONFIG_PATH: "bytetrack.yaml"
 OBJECTS_TO_SHOW:
     - "person" # Use the exact names in COCO dataset
 
