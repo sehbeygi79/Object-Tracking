@@ -44,7 +44,7 @@ All parameters and configurations are managed via the `configs.yaml` file.
 
 # Demo
 
-<video src="https://github.com/user-attachments/assets/f27914da-88dc-43d8-bf64-c5a3a20c72ea" 
+<video src="https://github.com/user-attachments/assets/a4bff196-7364-4847-a0cf-fb7b0b9956d7" 
        loop 
        muted 
        autoplay 
