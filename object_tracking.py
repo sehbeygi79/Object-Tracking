@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 from ultralytics.utils.plotting import Annotator, colors
+from tqdm import tqdm
 
 from line_crossing import LineCrossing
 
@@ -26,6 +27,7 @@ class ObjectTracking:
         # Video I/O setup
         self.cap = None
         self.video_fps = None
+        self.total_frames = None
         self.output = None
         self._setup_video_io()
 
@@ -33,6 +35,7 @@ class ObjectTracking:
         self.line_crossing_manager = LineCrossing(
             cfg.POLICY_JSON_PATH, cfg.LINE_ALERT_DURATION, self.video_fps
         )
+        self.line_crossing_wait_time = 5
 
     def _setup_video_io(self):
         self.cap = cv2.VideoCapture(self.cfg.INPUT_VIDEO_PATH)
@@ -40,6 +43,7 @@ class ObjectTracking:
             raise IOError(f"Cannot open video source: {self.cfg.INPUT_VIDEO_PATH}")
 
         self.video_fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
+        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -159,44 +163,59 @@ class ObjectTracking:
         print(
             f"Starting video processing with detection every {self.cfg.SKIP_FRAMES} frames..."
         )
-        frame_count = 0
+
         start_time = time.time()
         last_confs = np.array([])
 
-        while self.cap.isOpened():
-            success, frame = self.cap.read()
-            detection_results = {}
+        with tqdm(
+            total=self.total_frames, desc="Processing Video", unit="frame"
+        ) as pbar:
+            frame_count = 0
+            while self.cap.isOpened():
+                success, frame = self.cap.read()
+                detection_results = {}
 
-            if not success:  # Reached the end of the video
-                break
+                if not success:  # Reached the end of the video
+                    break
 
-            if frame_count % self.cfg.SKIP_FRAMES == 0:
-                detection_results, last_confs = self._process_frame_via_detection(frame)
-                self.line_crossing_manager.update_crossing_status(
-                    detection_results, self.track_history
-                )
+                if frame_count % self.cfg.SKIP_FRAMES == 0:
+                    detection_results, last_confs = self._process_frame_via_detection(
+                        frame
+                    )
 
-            # Use tracker's predictions for skipped frames
-            else:
-                if self.tracker is not None:
-                    detection_results = self._process_frame_via_prediction(last_confs)
+                # Use tracker's predictions for skipped frames
                 else:
-                    frame_count += 1
-                    continue
+                    if self.tracker is not None:
+                        detection_results = self._process_frame_via_prediction(
+                            last_confs
+                        )
+                    else:
+                        frame_count += 1
+                        continue
 
-            # Final rendering
-            frame = self._draw_all_annotations(
-                frame, detection_results, frame_count, start_time
-            )
-            if self.cfg.SHOW_STREAM:
-                cv2.imshow("People Tracking", frame)
-            if self.cfg.SAVE_VIDEO:
-                self.output.write(frame)
+                self.line_crossing_manager.reset_line_triggers()
+                if frame_count % self.line_crossing_wait_time == 0:
+                    self.line_crossing_manager.update_crossing_status(
+                        detection_results,
+                        self.track_history,
+                        curr_time=frame_count / self.video_fps,
+                    )
 
-            # Break loop on user input
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+                # Final rendering
+                frame = self._draw_all_annotations(
+                    frame, detection_results, frame_count, start_time
+                )
+                if self.cfg.SHOW_STREAM:
+                    cv2.imshow("People Tracking", frame)
+                if self.cfg.SAVE_VIDEO:
+                    self.output.write(frame)
 
-            frame_count += 1
+                # Break loop on user input: "q"
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
 
+                frame_count += 1
+                pbar.update(1)
+
+        self.line_crossing_manager.print_logs()
         self._release_video_resources()

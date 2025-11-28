@@ -95,11 +95,11 @@ class LineCrossing:
 
         return frame
 
-    def update_crossing_status(self, detection_results, track_history):
+    def update_crossing_status(self, detection_results, track_history, curr_time):
         if not len(self.policy_lines):
             return
 
-        self.lines_triggered = [False] * len(self.policy_lines)
+        self.reset_line_triggers()
         # Check for line crossing events
         for bbox, track_id in zip(
             detection_results.get("bboxes", []),
@@ -119,13 +119,23 @@ class LineCrossing:
                     if self._is_crossing(
                         prev_center, current_center, line_start, line_end
                     ):
-                        self.line_crossing_storage[line_id].append(track_id)
-                        self.lines_triggered[line_id] = True
-                        print(
-                            f"--- Line Crossing Detected! --- Track ID {track_id} crossed Line {line_id}"
+                        self.line_crossing_storage[line_id].append(
+                            (track_id, curr_time)
                         )
+                        self.lines_triggered[line_id] = True
 
             # Update track history but keep only the last two points (necessary for crossing check)
             track_history[track_id].append(current_center)
             if len(track_history[track_id]) > 2:
                 track_history[track_id].pop(0)
+
+    def reset_line_triggers(self):
+        self.lines_triggered = [False] * len(self.policy_lines)
+
+    def print_logs(self):
+        print("\nLine Crossing Logs:")
+        for line_id, crossing_history in self.line_crossing_storage.items():
+            for track_id, crossing_time in crossing_history:
+                print(
+                    f"--- Line Crossing Detected! --- Track ID {track_id} crossed Line {line_id} at time: {crossing_time:.2f}"
+                )
