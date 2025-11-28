@@ -1,9 +1,9 @@
 services:
-    people-tracker:
-        image: people-tracker-image:1
+    object-tracker:
+        image: object-tracker-image:1
         build:
             context: .
-        container_name: people-tracker-cont
+        container_name: object-tracker-cont
         volumes:
             - ./data:/app/data
         tty: true

@@ -12,6 +12,6 @@ COPY requirements.txt ./
 RUN pip install --trusted-host https://mirror-pypi.runflare.com -i https://mirror-pypi.runflare.com/simple/ --no-cache-dir -r requirements.txt
 RUN mkdir -p ./data/
 
-COPY main.py utils.py bytetrack.yaml ./
+COPY main.py object_tracking.py line_crossing.py configs.yaml bytetrack.yaml ./
 
 CMD ["python3", "main.py"]

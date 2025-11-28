@@ -4,7 +4,7 @@ OUTPUT_VIDEO_PATH: "./data/output.mp4"
 POLICY_JSON_PATH: "./data/policy.json"
 MODEL_NAME: "yolo11n.pt"
 DEVICE: "cpu"
-IMG_SIZE: 320
+IMG_SIZE: 640
 OD_CONF_THRESHOLD: 0.25
 TRACKER_CONFIG_PATH: "bytetrack.yaml"
 OBJECTS_TO_SHOW:
@@ -15,5 +15,5 @@ LINE_ALERT_DURATION: 3 # Number of seconds to keep the alert when a line is cros
 SKIP_FRAMES: 5 # Set to 1 to disable skipping
 
 # --- Output and Display Control ---
-SHOW_STREAM: True # Set to True to display the processed video
+SHOW_STREAM: False # Set to True to display the processed video
 SAVE_VIDEO: True # Set to True to store the processed video
